@@ -1,9 +1,3 @@
 **/.DS_Store
 build/
 function/crhelper*
-nag.sh
-function.sh
-copy.sh
-deploy.sh
-cleanup.sh
-dicoogle-main-config.json
