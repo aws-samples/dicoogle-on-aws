@@ -1,0 +1,846 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ECS template
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W2001
+
+Parameters:
+  VpcId:
+    Type: String
+    Description: Provider VPC id where ECS application services are launched.
+  PrivateSubnet1Id:
+    Type: String
+    Description: Provider private subnet1 where ECS application services are launched.
+  PrivateSubnet2Id:
+    Type: String
+    Description: Provider private subnet2 where ECS application services are launched.
+  PublicSubnet1Id:
+    Type: String
+    Description: Provider public subnet1 where ALB is placed.
+  PublicSubnet2Id:
+    Type: String
+    Description: Provider public subnet2 where ALB is placed.
+  ProviderPrivateSubnet1Cidr:
+    Type: String
+    Description: Provider private subnet1 CIDR.
+  ProviderPrivateSubnet2Cidr:
+    Type: String
+    Description: Provider private subnet2 CIDR.
+  ProviderRouteTable1Id:
+    Type: String
+    Description: Provider private subnet1 route table id.
+  ProviderRouteTable2Id:
+    Type: String
+    Description: Provider private subnet2 route table id.
+  DicoogleImage:
+    Type: String
+    Description: ECR image for Dicoogle.
+  NginxImage:
+    Type: String
+    Description: ECR image for Nginx.
+  GhostunnelImage:
+    Type: String
+    Description: ECR image for Ghostunnel.
+  ServiceName:
+    Type: String
+    Description: ECS service name for Dicoogle.
+    Default: dicoogle-provider
+  StoragePort:
+    Description: Port for Dicoogle's storage service.
+    Type: Number
+    Default: 6666
+  QueryPort:
+    Description: Port for Dicoogle's query retrieve service.
+    Type: Number
+    Default: 1045
+  ConsumerPort:
+    Description: Port for storage class provider (e.g. storescp) running as consumer of Dicoogle service.
+    Type: Number
+    Default: 7777
+  AdminPort:
+    Description: Port for Dicoogle's web admin.
+    Type: Number
+    Default: 8080
+  AdminReverseProxyPort:
+    Description: Port for Nginx container running as reverse proxy for Dicoogle's web admin.
+    Type: Number
+    Default: 8443  
+  StorageReverseProxyPort:
+    Description: Port for Ghostunnel container running as reverse proxy for Dicoogle's storage service.
+    Type: Number
+    Default: 16666
+  ConsumerForwardProxyPort:
+    Description: Port for Ghostunnel container running as forward proxy for Dicoogle to communicate with storage class provider/consumer of Dicoogle service.
+    Type: Number
+    Default: 17777
+  ALBPort:
+    Description: Port for Application Load Balancer.
+    Type: Number
+    Default: 443
+  HealthCheckPath:
+    Description: Health check path for Dicoogle. 
+    Type: String
+    Default: /
+  MinCapacity:
+    Description: Lower limit of ECS service auto scaling.
+    Type: Number
+    Default: 1
+  MaxCapacity:
+    Description: Upper limit of ECS service auto scaling.
+    Type: Number
+    Default: 5
+  AutoScalingTargetValue:
+    Description: CPU utilization target tracking scaling policy for ECS service auto scaling.
+    Type: Number
+    Default: 50
+  EFSFS:
+    Description: EFS file system id.
+    Type: String
+  APImages:
+    Description: EFS access point for images ingested through Dicoogle application.
+    Type: String
+  APImagesFromS3:
+    Description: EFS access point for images ingested through S3.
+    Type: String
+  APIndex:
+    Description: EFS access point for Dicoogle indexes.
+    Type: String
+  APConfs:
+    Description: EFS access point for Dicoogle configuration.
+    Type: String
+  EFSSecurityGroup:
+    Description: Security group for EFS.
+    Type: String
+  LogBucket:
+    Description: S3 bucket for logs.
+    Type: String
+  DomainName:
+    Description: Public facing domain name used by ALB.
+    Type: String
+  HostedZone:
+    Description: Public hosted zone in Route53.
+    Type: List<AWS::Route53::HostedZone::Id>
+  KmsKey:
+    Description: KMS key used for encrypting/decrypting data in EFS and cloudwatch log.
+    Type: String
+  ServiceToken:
+    Description: Lambda function ARN used to get prefix list ID
+    Type: String
+  StorageInstanceSecurityGroup:
+    Description: Security group for storage EC2 instance.
+    Type: String
+  PrivateDomainName:
+    Description: Internal/private domain used between Dicoogle and consumer services.
+    Type: String
+  StorageInstanceDNS:
+    Type: String
+    Description: Storage instance DNS as placeholder to ensure execution order between DNSStack and ECSStack.
+  UserPool:
+    Description: Cognito user pool for Dicoogle administrators.
+    Type: String
+  UserPoolArn:
+    Description: Cognito user pool ARN for Dicoogle administrators.
+    Type: String
+  UserPoolDomain:
+    Description: Cognito user pool domain for Dicoogle administrators.
+    Type: String
+  NginxCert:
+    Description: ARN of secret in secrets manager that contains Nginx certificate.
+    Type: String
+  NginxKey:
+    Description: ARN of the secret in secrets manager that contains Nginx private key.
+    Type: String
+  GhostunnelCert:
+    Description: ARN of the secret in secrets manager that contains Ghostunnel certificate.
+    Type: String
+  GhostunnelKey:
+    Description: ARN of the secret in secrets manager that contains Ghostunnel private key.
+    Type: String
+  CACert:
+    Description: ARN of the secret in secrets manager that contains CA certificate.
+    Type: String
+
+Resources:
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Join ['', [!Ref ServiceName, Cluster]]
+
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Join ['', [!Ref ServiceName, TaskDefinition]]
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: 1024
+      Memory: 2048
+      ExecutionRoleArn: !GetAtt ECSExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: !Ref ServiceName
+          Image: !Ref DicoogleImage
+          MountPoints:
+            - SourceVolume: images
+              ContainerPath: /opt/dicoogle/Dicoogle_v3.0.2/images
+            - SourceVolume: imagesfroms3
+              ContainerPath: /opt/dicoogle/Dicoogle_v3.0.2/images/froms3
+            - SourceVolume: index
+              ContainerPath: /opt/dicoogle/Dicoogle_v3.0.2/index
+            - SourceVolume: confs
+              ContainerPath: /opt/dicoogle/Dicoogle_v3.0.2/confs
+          PortMappings:
+            - ContainerPort: !Ref AdminPort
+            - ContainerPort: !Ref StoragePort
+            - ContainerPort: !Ref QueryPort
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-stream-prefix: ecs
+        - Name: nginx
+          Image: !Ref NginxImage
+          PortMappings:
+            - ContainerPort: !Ref AdminReverseProxyPort
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-stream-prefix: ecs
+          Secrets:
+            - Name: NGINXCERT
+              ValueFrom: !Ref NginxCert
+            - Name: NGINXKEY
+              ValueFrom: !Ref NginxKey
+        - Name: ghostunnel-reverseproxy
+          Image: !Ref GhostunnelImage
+          PortMappings:
+            - ContainerPort: !Ref StorageReverseProxyPort
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-stream-prefix: ecs
+          Secrets:
+            - Name: GHOSTUNNELCERT
+              ValueFrom: !Ref GhostunnelCert
+            - Name: GHOSTUNNELKEY
+              ValueFrom: !Ref GhostunnelKey
+            - Name: CACERT
+              ValueFrom: !Ref CACert
+          Command:
+            - "/bin/sh"
+            - "-c"
+            - !Join ['', ["/usr/bin/ghostunnel server --cert=/etc/ghostunnel/ghostunnelcert.pem --key=/etc/ghostunnel/ghostunnelkey.pem --cacert=/etc/ghostunnel/cacert.pem --listen 0.0.0.0:", !Ref StorageReverseProxyPort, " --target ", "localhost:", !Ref StoragePort, " --allow-all"]]
+        - Name: ghostunnel-forwardproxy
+          Image: !Ref GhostunnelImage
+          PortMappings:
+            - ContainerPort: !Ref ConsumerForwardProxyPort
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-stream-prefix: ecs
+          Secrets:
+            - Name: GHOSTUNNELCERT
+              ValueFrom: !Ref GhostunnelCert
+            - Name: GHOSTUNNELKEY
+              ValueFrom: !Ref GhostunnelKey
+            - Name: CACERT
+              ValueFrom: !Ref CACert
+          Command:
+            - "/bin/sh"
+            - "-c"
+            - !Join ['', ["/usr/bin/ghostunnel client --cert=/etc/ghostunnel/ghostunnelcert.pem --key=/etc/ghostunnel/ghostunnelkey.pem --cacert=/etc/ghostunnel/cacert.pem --listen localhost:", !Ref ConsumerForwardProxyPort, " --target ", "storage.", !Ref PrivateDomainName, ":", !Ref ConsumerPort]]
+      Volumes:
+        - Name: images
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EFSFS
+            RootDirectory: /
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref APImages
+              IAM: ENABLED
+        - Name: imagesfroms3
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EFSFS
+            RootDirectory: /
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref APImagesFromS3
+              IAM: ENABLED
+        - Name: index
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EFSFS
+            RootDirectory: /
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref APIndex
+              IAM: ENABLED  
+        - Name: confs
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EFSFS
+            RootDirectory: /
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref APConfs
+              IAM: ENABLED                
+
+  ECSExecutionRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Resource for list secrets action needs to be *"
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+      Policies:
+        - PolicyName: kms-access-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:GetPublicKey
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                  - kms:DescribeKey
+                Resource: !Ref KmsKey
+        - PolicyName: secretsmanager-access-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetResourcePolicy
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:ListSecretVersionIds
+                Resource:
+                  - !Ref NginxCert
+                  - !Ref NginxKey
+                  - !Ref GhostunnelCert
+                  - !Ref GhostunnelKey
+                  - !Ref CACert
+              - Effect: Allow
+                Action:
+                  - secretsmanager:ListSecrets
+                Resource: '*'
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonElasticFileSystemClientReadWriteAccess'
+
+  ECSAutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole'
+
+  EFSSecurityGroupRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EFSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref ContainerSecurityGroup
+      Description: ingress to EFS
+
+  StorageInstanceSecurityGroupRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref StorageInstanceSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref ConsumerPort
+      ToPort: !Ref ConsumerPort
+      SourceSecurityGroupId: !Ref ContainerSecurityGroup
+      Description: ingress to storage instance
+
+  ContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Join ['', [!Ref ServiceName, ContainerSecurityGroup]]
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          DestinationSecurityGroupId: !Ref EFSSecurityGroup
+          FromPort: 2049
+          ToPort: 2049
+          Description: egress rule to EFS
+        - IpProtocol: tcp
+          DestinationSecurityGroupId: !Ref StorageInstanceSecurityGroup
+          FromPort: !Ref ConsumerPort
+          ToPort: !Ref ConsumerPort
+          Description: egress rule to EC2
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref StorageReverseProxyPort
+          ToPort: !Ref StorageReverseProxyPort
+          CidrIp: !Ref ProviderPrivateSubnet1Cidr
+          Description: ingress to storage port from subnet1
+        - IpProtocol: tcp
+          FromPort: !Ref QueryPort
+          ToPort: !Ref QueryPort
+          CidrIp: !Ref ProviderPrivateSubnet1Cidr
+          Description: ingress to query port from subnet1
+        - IpProtocol: tcp
+          FromPort: !Ref StorageReverseProxyPort
+          ToPort: !Ref StorageReverseProxyPort
+          CidrIp: !Ref ProviderPrivateSubnet2Cidr
+          Description: ingress to storage port from subnet2
+        - IpProtocol: tcp
+          FromPort: !Ref QueryPort
+          ToPort: !Ref QueryPort
+          CidrIp: !Ref ProviderPrivateSubnet2Cidr
+          Description: ingress to query port from subnet2
+
+  ALBToContainerIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ContainerSecurityGroup
+      Description: ingress rule for ALB to Container admin port
+      IpProtocol: tcp
+      FromPort: !Ref AdminReverseProxyPort
+      ToPort: !Ref AdminReverseProxyPort
+      SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  ContainerToEndpointRule1:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ContainerSecurityGroup
+      Description: egress rule from container to interface endpoint
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationSecurityGroupId: !Ref EndpointSecurityGroup
+
+  S3PrefixListId:
+    Type: Custom::GetPrefixListID
+    Properties:
+      ServiceToken: !Ref ServiceToken
+      plname: !Sub "com.amazonaws.${AWS::Region}.s3"
+
+  ContainerToEndpointRule2:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ContainerSecurityGroup
+      Description: egress rule from container to gateway endpoint
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationPrefixListId: !GetAtt S3PrefixListId.result
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Join ['', [!Ref ServiceName, EndpointSecurityGroup]]
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ContainerSecurityGroup
+          Description: allow traffic from container
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: !Ref ProviderPrivateSubnet1Cidr
+        Description: allow to AWS services
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: !Ref ProviderPrivateSubnet2Cidr
+        Description: allow to AWS services
+
+  ECREndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+      ServiceName: !Join [ "", [ "com.amazonaws.", { "Ref": "AWS::Region" }, ".ecr.dkr" ] ]
+      SubnetIds:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+      VpcEndpointType: 'Interface'
+      VpcId:
+        Ref: VpcId
+
+  ECRAPIEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+      ServiceName: !Join [ "", [ "com.amazonaws.", { "Ref": "AWS::Region" }, ".ecr.api" ] ]
+      SubnetIds:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+      VpcEndpointType: 'Interface'
+      VpcId:
+        Ref: VpcId
+
+  CWEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup 
+      ServiceName: !Join [ "", [ "com.amazonaws.", { "Ref": "AWS::Region" }, ".logs" ] ]
+      SubnetIds:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+      VpcEndpointType: 'Interface'
+      VpcId:
+        Ref: VpcId
+
+  SMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup 
+      ServiceName: !Join [ "", [ "com.amazonaws.", { "Ref": "AWS::Region" }, ".secretsmanager" ] ]
+      SubnetIds:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+      VpcEndpointType: 'Interface'
+      VpcId:
+        Ref: VpcId
+
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Join [ "", [ "com.amazonaws.", { "Ref": "AWS::Region" }, ".s3" ] ]
+      VpcEndpointType: 'Gateway'
+      VpcId:
+        Ref: VpcId
+      RouteTableIds:
+        - !Ref ProviderRouteTable1Id
+        - !Ref ProviderRouteTable2Id
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W5
+            reason: "Open up egress to 0.0.0.0/0 to reach out to Cognito"
+          - id: W2
+            reason: "Allow traffic from Internet to reach ALB"
+          - id: W9
+            reason: "Allow traffic from Internet to reach ALB"
+    Properties:
+      GroupDescription: !Join ['', [!Ref ServiceName, ALBSecurityGroup]]
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          DestinationSecurityGroupId: !Ref ContainerSecurityGroup
+          FromPort: !Ref AdminReverseProxyPort
+          ToPort: !Ref AdminReverseProxyPort
+          Description: egress rule for ALB to Container
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: 443
+          ToPort: 443
+          Description: egress rule for ALB to Cognito
+
+  ALBIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ALBSecurityGroup
+      Description: ingress rule for ALB
+      IpProtocol: tcp
+      CidrIp: 0.0.0.0/0
+      FromPort: !Ref ALBPort
+      ToPort: !Ref ALBPort
+
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - ALBListener
+      - NLBStorageListener
+      - NLBQueryListener
+    Properties: 
+      ServiceName: !Ref ServiceName
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref ECSTaskDefinition
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      DesiredCount: 1
+      HealthCheckGracePeriodSeconds: 0
+      LaunchType: FARGATE
+      NetworkConfiguration: 
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !Ref PrivateSubnet1Id
+            - !Ref PrivateSubnet2Id
+          SecurityGroups:
+            - !Ref ContainerSecurityGroup
+      LoadBalancers:
+        - ContainerName: nginx
+          ContainerPort: !Ref AdminReverseProxyPort
+          TargetGroupArn: !Ref ALBTargetGroup
+        - ContainerName: ghostunnel-reverseproxy
+          ContainerPort: !Ref StorageReverseProxyPort
+          TargetGroupArn: !Ref NLBStorageTargetGroup
+        - ContainerName: !Ref ServiceName
+          ContainerPort: !Ref QueryPort
+          TargetGroupArn: !Ref NLBQueryTargetGroup
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckTimeoutSeconds: 5
+      UnhealthyThresholdCount: 2
+      HealthyThresholdCount: 5
+      Name: !Join ['', [!Ref ServiceName, Admin]]
+      Port: !Ref AdminReverseProxyPort
+      Protocol: HTTPS
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 60
+      TargetType: ip
+      VpcId: !Ref VpcId
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: 'authenticate-cognito'
+          AuthenticateCognitoConfig:
+            OnUnauthenticatedRequest: 'authenticate'
+            Scope: 'openid'
+            UserPoolArn: !Ref UserPoolArn
+            UserPoolClientId: !Ref UserPoolClient
+            UserPoolDomain: !Ref UserPoolDomain
+          Order: 1
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+          Order: 2
+      LoadBalancerArn: !Ref ALB
+      Port: !Ref ALBPort
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref ALBSSLCert
+      SslPolicy: ELBSecurityPolicy-TLS-1-2-Ext-2018-06
+
+  ALBSSLCert:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Join ["", ["dicoogle-", !Ref AWS::Region, ".", !Ref DomainName]]
+      DomainValidationOptions:
+            - DomainName: !Join ["", ["dicoogle-", !Ref AWS::Region, ".", !Ref DomainName]]
+              HostedZoneId: !Select [0, !Ref HostedZone]
+      ValidationMethod: DNS
+      CertificateTransparencyLoggingPreference: DISABLED
+
+  HostedZoneRecord:
+    DependsOn:
+      - ALBSSLCert
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Select [0, !Ref HostedZone]
+      Type: A
+      Name: !Join ["", ["dicoogle-", !Ref AWS::Region, ".", !Ref DomainName]]
+      AliasTarget:
+        DNSName: !GetAtt 'ALB.DNSName'
+        HostedZoneId: !GetAtt 'ALB.CanonicalHostedZoneID'
+
+  UserPoolClient:
+    Type: 'AWS::Cognito::UserPoolClient'
+    Properties:
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      CallbackURLs:
+        - !Join ["", ["https://", !Ref HostedZoneRecord, "/oauth2/idpresponse"]]
+      SupportedIdentityProviders:
+        - COGNITO
+      UserPoolId: !Ref UserPool  
+      GenerateSecret: true
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: 60
+        - Key: access_logs.s3.enabled
+          Value: true
+        - Key: access_logs.s3.bucket 
+          Value: !Ref LogBucket
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1Id
+        - !Ref PublicSubnet2Id
+
+  NLBStorageTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      UnhealthyThresholdCount: 3
+      HealthyThresholdCount: 3
+      Name: !Join ['', [!Ref ServiceName, Storage]]
+      Port: !Ref StorageReverseProxyPort
+      Protocol: TCP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 60
+      TargetType: ip
+      VpcId: !Ref VpcId
+
+  NLBStorageListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref NLBStorageTargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref NLB
+      Port: !Ref StorageReverseProxyPort
+      Protocol: TCP
+
+  NLBQueryTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      UnhealthyThresholdCount: 3
+      HealthyThresholdCount: 3
+      Name: !Join ['', [!Ref ServiceName, Query]]
+      Port: !Ref QueryPort
+      Protocol: TCP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 60
+      TargetType: ip
+      VpcId: !Ref VpcId
+
+  NLBQueryListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref NLBQueryTargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref NLB
+      Port: !Ref QueryPort
+      Protocol: TCP
+
+  NLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: network
+      Scheme: internal
+      LoadBalancerAttributes:
+        - Key: load_balancing.cross_zone.enabled
+          Value: true
+        - Key: access_logs.s3.enabled
+          Value: true
+        - Key: access_logs.s3.bucket 
+          Value: !Ref LogBucket
+      Subnets:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+
+  ECSLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      KmsKeyId: !Ref KmsKey
+      RetentionInDays: 1
+
+  ECSAutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MinCapacity: !Ref MinCapacity
+      MaxCapacity: !Ref MaxCapacity
+      ResourceId: !Join ['/', [service, !Ref ECSCluster, !GetAtt ECSService.Name]]
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+      RoleARN: !GetAtt ECSAutoScalingRole.Arn
+
+  ECSAutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Join ['', [!Ref ServiceName, AutoScalingPolicy]]
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ECSAutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 10
+        ScaleOutCooldown: 10
+        TargetValue: !Ref AutoScalingTargetValue
+
+Outputs:
+  ALBEndpoint:
+    Description: ALB Endpoint
+    Value: !GetAtt ALB.DNSName
+
+  ALBDnsRecord:
+    Description: Hosted zone record for ALB
+    Value: !Ref HostedZoneRecord
+
+  NLBEndpoint:
+    Description: NLB Endpoint
+    Value: !GetAtt NLB.DNSName
+
+  NLBArn:
+    Description: NLB ARN
+    Value: !Ref NLB

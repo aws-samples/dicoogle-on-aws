@@ -1,0 +1,516 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Deploy Dicgoole on AWS.
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Require input
+        Parameters:
+          - KeyName
+          - S3BucketName
+          - DicoogleImage
+          - NginxImage
+          - GhostunnelImage
+          - NginxCert
+          - NginxKey
+          - GhostunnelCert
+          - GhostunnelKey
+          - CACert
+          - DomainName
+          - HostedZone
+          - AvailabilityZones
+      - Label:
+          default: Contain default value. Input is optional.
+        Parameters:
+          - SSHLocation
+          - ProviderVPCName
+          - ProviderVPCCidr
+          - ProviderPrivateSubnet1Cidr
+          - ProviderPrivateSubnet2Cidr
+          - ProviderPublicSubnet1Cidr
+          - ProviderPublicSubnet2Cidr
+          - ConsumerVPCName
+          - ConsumerVPCCidr
+          - ConsumerPrivateSubnet1Cidr
+          - ConsumerPrivateSubnet2Cidr
+          - ConsumerPublicSubnet1Cidr
+          - ConsumerPublicSubnet2Cidr
+          - OnpremVPCName
+          - OnpremVPCCidr
+          - OnpremPrivateSubnet1Cidr
+          - OnpremPrivateSubnet2Cidr
+          - OnpremPublicSubnet1Cidr
+          - OnpremPublicSubnet2Cidr
+          - InstanceType
+          - LatestAmiId
+          - PrivateDomainName
+          - CreateVPCFlowLog
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an EC2 KeyPair to enable SSH access to EC2 instance
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+  S3BucketName:
+    Type: String
+    Description: S3 bucket name to host cloudformation templates and lambda function files. S3 bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-). It cannot start or end with a hyphen (-).
+    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-.]*[0-9a-zA-Z])*$
+    ConstraintDescription: Bucket name can include numbers, lowercase letters, uppercase letters, periods (.), and hyphens (-). It cannot start or end with a hyphen (-).
+
+  DicoogleImage:
+    Type: String 
+    Description: The dicoogle container image in ECR.
+
+  NginxImage:
+    Type: String 
+    Description: The nginx container image in ECR.
+
+  GhostunnelImage:
+    Type: String 
+    Description: The ghostunnel container image in ECR.
+
+  NginxCert:
+    Type: String 
+    Description: ARN of the secret in secrets manager that contains Nginx certificate.
+
+  NginxKey:
+    Type: String 
+    Description: ARN of the secret in secrets manager that contains Nginx private key.
+
+  GhostunnelCert:
+    Type: String 
+    Description: ARN of the secret in secrets manager that contains Ghostunnel certificate.
+
+  GhostunnelKey:
+    Type: String 
+    Description: ARN of the secret in secrets manager that contains Ghostunnel private key.
+
+  CACert:
+    Type: String 
+    Description: ARN of the secret in secrets manager that contains CA certificate.
+
+  DomainName:
+    Description: The DNS domain name for public hosted zone.
+    Type: String
+
+  HostedZone:
+    Type: List<AWS::Route53::HostedZone::Id>
+    Description: The Route53 hosted zone id.
+
+  AvailabilityZones:
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+    Description: The list of availability zones to use for subnets in VPC.
+
+  SSHLocation:
+    Type: String
+    Description: The IP address range that are allowed to SSH to EC2 instances.
+    MinLength: 9
+    MaxLength: 18
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+    Default: 0.0.0.0/0
+
+  PrivateDomainName:
+    Description: The DNS domain name for private hosted zone.
+    Type: String
+    Default: "example.com"
+
+  ProviderVPCName:
+    Type: String
+    Description: The name of service provider VPC.
+    Default: dicoogle-provider
+
+  ProviderVPCCidr:
+    Type: String
+    Description: The CIDR block for the VPC.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.0.0/16
+
+  ProviderPrivateSubnet1Cidr:
+    Type: String
+    Description: The CIDR block for the private subnet located in availability zone 1.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.0.0/24
+
+  ProviderPrivateSubnet2Cidr:
+    Type: String
+    Description: The CIDR block for the private subnet located in availability zone 2.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.1.0/24
+
+  ProviderPublicSubnet1Cidr:
+    Type: String
+    Description: The CIDR block for the public subnet located in availability zone 1.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.2.0/24
+
+  ProviderPublicSubnet2Cidr:
+    Type: String
+    Description: The CIDR block for the public subnet located in availability zone 2.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.3.0/24
+
+  ConsumerVPCName:
+    Type: String
+    Description: The name of service consumer VPC.
+    Default: dicoogle-consumer
+
+  ConsumerVPCCidr:
+    Type: String
+    Description: The CIDR block for the VPC.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.1.0.0/16
+
+  ConsumerPrivateSubnet1Cidr:
+    Type: String
+    Description: The CIDR block for the private subnet located in availability zone 1.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.1.0.0/24
+
+  ConsumerPrivateSubnet2Cidr:
+    Type: String
+    Description: The CIDR block for the private subnet located in availability zone 2.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.1.1.0/24
+
+  ConsumerPublicSubnet1Cidr:
+    Type: String
+    Description: The CIDR block for the public subnet located in availability zone 1.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.1.2.0/24
+
+  ConsumerPublicSubnet2Cidr:
+    Type: String
+    Description: The CIDR block for the public subnet located in availability zone 2.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.1.3.0/24
+
+  OnpremVPCName:
+    Type: String
+    Description: The name of the VPC used to simulate on-prem environment.
+    Default: dicoogle-onprem
+
+  OnpremVPCCidr:
+    Type: String
+    Description: The CIDR block for the VPC.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.2.0.0/16
+
+  OnpremPrivateSubnet1Cidr:
+    Type: String
+    Description: The CIDR block for the private subnet located in availability zone 1.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.2.0.0/24
+
+  OnpremPrivateSubnet2Cidr:
+    Type: String
+    Description: The CIDR block for the private subnet located in availability zone 2.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.2.1.0/24
+
+  OnpremPublicSubnet1Cidr:
+    Type: String
+    Description: The CIDR block for the public subnet located in availability zone 1.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.2.2.0/24
+
+  OnpremPublicSubnet2Cidr:
+    Type: String
+    Description: The CIDR block for the public subnet located in availability one 2.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.2.3.0/24
+
+  CreateVPCFlowLog:
+    Type: String
+    Description: Determine if we need to create VPC flow log.
+    Default: N
+
+  InstanceType:
+    Type: String
+    Description: EC2 instance type
+    AllowedValues: [t2.nano, t2.micro, t2.small, t2.medium, t2.large, t2.xlarge, t2.2xlarge,
+      t3.nano, t3.micro, t3.small, t3.medium, t3.large, t3.xlarge, t3.2xlarge,
+      m4.large, m4.xlarge, m4.2xlarge, m4.4xlarge, m4.10xlarge,
+      m5.large, m5.xlarge, m5.2xlarge, m5.4xlarge,
+      c5.large, c5.xlarge, c5.2xlarge, c5.4xlarge, c5.9xlarge,
+      g3.8xlarge,
+      r5.large, r5.xlarge, r5.2xlarge, r5.4xlarge, r3.12xlarge,
+      i3.xlarge, i3.2xlarge, i3.4xlarge, i3.8xlarge,
+      d2.xlarge, d2.2xlarge, d2.4xlarge, d2.8xlarge]
+    ConstraintDescription: must be a valid EC2 instance type.
+    Default: t2.micro
+
+  LatestAmiId:
+    Type:  'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Description: The AMI id for EC2 instance.
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2' 
+
+Resources:
+  LambdaStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-lambda-deployment.yaml
+      TimeoutInMinutes: 20
+
+  ProviderVpcStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-vpc-template.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        AvailabilityZones:
+          Fn::Join:
+            - ','
+            - !Ref AvailabilityZones
+        VPCCidr: !Ref ProviderVPCCidr
+        VPCName: !Ref ProviderVPCName
+        PublicSubnet1Cidr: !Ref ProviderPublicSubnet1Cidr
+        PublicSubnet2Cidr: !Ref ProviderPublicSubnet2Cidr
+        PrivateSubnet1Cidr: !Ref ProviderPrivateSubnet1Cidr
+        PrivateSubnet2Cidr: !Ref ProviderPrivateSubnet2Cidr
+        LogBucketArn: !GetAtt LogBucketStack.Outputs.LogBucketArn
+        CreateVPCFlowLog: !Ref CreateVPCFlowLog
+
+  ConsumerVpcStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-vpc-template.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        AvailabilityZones:
+          Fn::Join:
+            - ','
+            - !Ref AvailabilityZones
+        VPCCidr: !Ref ConsumerVPCCidr
+        VPCName: !Ref ConsumerVPCName
+        PublicSubnet1Cidr: !Ref ConsumerPublicSubnet1Cidr
+        PublicSubnet2Cidr: !Ref ConsumerPublicSubnet2Cidr
+        PrivateSubnet1Cidr: !Ref ConsumerPrivateSubnet1Cidr
+        PrivateSubnet2Cidr: !Ref ConsumerPrivateSubnet2Cidr
+        LogBucketArn: !GetAtt LogBucketStack.Outputs.LogBucketArn
+        CreateVPCFlowLog: !Ref CreateVPCFlowLog
+
+  OnpremVpcStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-vpc-template.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        AvailabilityZones:
+          Fn::Join:
+            - ','
+            - !Ref AvailabilityZones
+        VPCCidr: !Ref OnpremVPCCidr
+        VPCName: !Ref OnpremVPCName
+        PublicSubnet1Cidr: !Ref OnpremPublicSubnet1Cidr
+        PublicSubnet2Cidr: !Ref OnpremPublicSubnet2Cidr
+        PrivateSubnet1Cidr: !Ref OnpremPrivateSubnet1Cidr
+        PrivateSubnet2Cidr: !Ref OnpremPrivateSubnet2Cidr
+        CreatePrivateSubnet: N
+        LogBucketArn: !GetAtt LogBucketStack.Outputs.LogBucketArn
+        CreateVPCFlowLog: !Ref CreateVPCFlowLog
+
+  VpcpeeringStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-vpcpeering-template.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        OnpremVpcId: !GetAtt OnpremVpcStack.Outputs.VpcId
+        ConsumerVpcId: !GetAtt ConsumerVpcStack.Outputs.VpcId
+        ProviderVpcId: !GetAtt ProviderVpcStack.Outputs.VpcId
+        OnpremCidr: !Ref OnpremVPCCidr
+        OnpremRouteTable1Id: !GetAtt OnpremVpcStack.Outputs.PublicSubnet1RouteTable
+        OnpremRouteTable2Id: !GetAtt OnpremVpcStack.Outputs.PublicSubnet2RouteTable
+        ConsumerCidr: !Ref ConsumerVPCCidr
+        ConsumerRouteTable1Id: !GetAtt ConsumerVpcStack.Outputs.PrivateSubnet1RouteTable
+        ConsumerRouteTable2Id: !GetAtt ConsumerVpcStack.Outputs.PrivateSubnet2RouteTable
+        ProviderCidr: !Ref ProviderVPCCidr
+        ProviderRouteTable1Id: !GetAtt ProviderVpcStack.Outputs.PrivateSubnet1RouteTable
+        ProviderRouteTable2Id: !GetAtt ProviderVpcStack.Outputs.PrivateSubnet2RouteTable
+
+  KMSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-kms-template.yaml
+      TimeoutInMinutes: 20
+
+  LogBucketStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-logbucket-template.yaml
+      TimeoutInMinutes: 20
+
+  ImagesBucketStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-imagesbucket-template.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        LogBucket: !GetAtt LogBucketStack.Outputs.LogBucket
+        KmsKey: !GetAtt KMSStack.Outputs.KmsKey
+
+  EFSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-efs-template.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        Subnet1Id: !GetAtt ProviderVpcStack.Outputs.PrivateSubnet1
+        Subnet2Id: !GetAtt ProviderVpcStack.Outputs.PrivateSubnet2
+        VpcId: !GetAtt ProviderVpcStack.Outputs.VpcId
+        KmsKey: !GetAtt KMSStack.Outputs.KmsKey
+
+  DataSyncStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-datasync-template.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        ImagesBucket: !GetAtt ImagesBucketStack.Outputs.ImagesBucket
+        ImagesBucketArn: !GetAtt ImagesBucketStack.Outputs.ImagesBucketArn
+        EFSFS: !GetAtt EFSStack.Outputs.EFSFS
+        VpcId: !GetAtt ProviderVpcStack.Outputs.VpcId
+        SubnetId: !GetAtt ProviderVpcStack.Outputs.PrivateSubnet1
+        EFSSecurityGroup: !GetAtt EFSStack.Outputs.EFSSecurityGroup
+        OnpremVpcId: !GetAtt OnpremVpcStack.Outputs.VpcId
+        OnpremRouteTable1Id: !GetAtt OnpremVpcStack.Outputs.PublicSubnet1RouteTable
+        OnpremRouteTable2Id: !GetAtt OnpremVpcStack.Outputs.PublicSubnet2RouteTable
+        KmsKey: !GetAtt KMSStack.Outputs.KmsKey
+
+  ClientEC2Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-ec2-template.yaml
+      TimeoutInMinutes: 40
+      Parameters:
+        KeyName: !Ref KeyName
+        InstanceType: !Ref InstanceType
+        SSHLocation: !Ref SSHLocation
+        LatestAmiId: !Ref LatestAmiId
+        VpcId: !GetAtt OnpremVpcStack.Outputs.VpcId
+        SubnetId: !GetAtt OnpremVpcStack.Outputs.PublicSubnet1
+        InstanceName: client
+        ImagesBucketArn: !GetAtt ImagesBucketStack.Outputs.ImagesBucketArn
+        KmsKey: !GetAtt KMSStack.Outputs.KmsKey
+
+  StorageEC2Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-ec2-template.yaml
+      TimeoutInMinutes: 40
+      Parameters:
+        KeyName: !Ref KeyName
+        InstanceType: !Ref InstanceType
+        SSHLocation: !Ref SSHLocation
+        LatestAmiId: !Ref LatestAmiId
+        VpcId: !GetAtt OnpremVpcStack.Outputs.VpcId
+        SubnetId: !GetAtt OnpremVpcStack.Outputs.PublicSubnet1
+        InstanceName: storage
+        ImagesBucketArn: !GetAtt ImagesBucketStack.Outputs.ImagesBucketArn
+        KmsKey: !GetAtt KMSStack.Outputs.KmsKey
+
+  DNSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-dns-template.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        VpcId: !GetAtt ProviderVpcStack.Outputs.VpcId
+        PrivateDomainName: !Ref PrivateDomainName
+        StorageInstanceIp: !GetAtt StorageEC2Stack.Outputs.InstancePrivateIP
+
+  CognitoStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-cognito-template.yaml
+      TimeoutInMinutes: 20
+
+  ECSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-ecs-template.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        VpcId: !GetAtt ProviderVpcStack.Outputs.VpcId
+        PrivateSubnet1Id: !GetAtt ProviderVpcStack.Outputs.PrivateSubnet1
+        PrivateSubnet2Id: !GetAtt ProviderVpcStack.Outputs.PrivateSubnet2
+        PublicSubnet1Id: !GetAtt ProviderVpcStack.Outputs.PublicSubnet1
+        PublicSubnet2Id: !GetAtt ProviderVpcStack.Outputs.PublicSubnet2
+        ProviderPrivateSubnet1Cidr: !Ref ProviderPrivateSubnet1Cidr
+        ProviderPrivateSubnet2Cidr: !Ref ProviderPrivateSubnet2Cidr
+        ProviderRouteTable1Id: !GetAtt ProviderVpcStack.Outputs.PrivateSubnet1RouteTable
+        ProviderRouteTable2Id: !GetAtt ProviderVpcStack.Outputs.PrivateSubnet2RouteTable
+        DicoogleImage: !Ref DicoogleImage
+        NginxImage: !Ref NginxImage
+        GhostunnelImage: !Ref GhostunnelImage
+        NginxCert: !Ref NginxCert
+        NginxKey: !Ref NginxKey
+        GhostunnelCert: !Ref GhostunnelCert
+        GhostunnelKey: !Ref GhostunnelKey
+        CACert: !Ref CACert
+        EFSFS: !GetAtt EFSStack.Outputs.EFSFS
+        APImages: !GetAtt EFSStack.Outputs.APImages
+        APImagesFromS3: !GetAtt EFSStack.Outputs.APImagesFromS3
+        APConfs: !GetAtt EFSStack.Outputs.APConfs
+        APIndex: !GetAtt EFSStack.Outputs.APIndex
+        EFSSecurityGroup: !GetAtt EFSStack.Outputs.EFSSecurityGroup
+        LogBucket: !GetAtt LogBucketStack.Outputs.LogBucket
+        DomainName: !Ref DomainName
+        HostedZone:
+          Fn::Join:
+            - ','
+            - !Ref HostedZone
+        KmsKey: !GetAtt KMSStack.Outputs.KmsKey
+        ServiceToken: !GetAtt LambdaStack.Outputs.GetPrefixListIDFunction
+        StorageInstanceSecurityGroup: !GetAtt StorageEC2Stack.Outputs.InstanceSecurityGroup
+        PrivateDomainName: !Ref PrivateDomainName
+        StorageInstanceDNS: !GetAtt DNSStack.Outputs.StorageInstanceDNS
+        UserPool: !GetAtt CognitoStack.Outputs.UserPool
+        UserPoolArn: !GetAtt CognitoStack.Outputs.UserPoolArn
+        UserPoolDomain: !GetAtt CognitoStack.Outputs.UserPoolDomain
+
+  PrivatelinkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/dicoogle-privatelink-template.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        ConsumerVpcId: !GetAtt ConsumerVpcStack.Outputs.VpcId
+        ConsumerSubnet1Id: !GetAtt ConsumerVpcStack.Outputs.PrivateSubnet1
+        ConsumerSubnet2Id: !GetAtt ConsumerVpcStack.Outputs.PrivateSubnet2
+        NLBArn: !GetAtt ECSStack.Outputs.NLBArn
+        ProviderSubnet1Cidr: !Ref ProviderPrivateSubnet1Cidr
+        ProviderSubnet2Cidr: !Ref ProviderPrivateSubnet2Cidr
+        ClientInstanceSecurityGroup: !GetAtt ClientEC2Stack.Outputs.InstanceSecurityGroup

@@ -1,0 +1,59 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+HOME            = .
+RANDFILE        = $ENV::HOME/.rnd
+
+####################################################################
+[ req ]
+default_bits       = 2048
+default_keyfile    = nginxkey.pem
+distinguished_name = nginx_distinguished_name
+req_extensions     = nginx_req_extensions
+string_mask        = utf8only
+
+####################################################################
+[ nginx_distinguished_name ]
+countryName         = Country Name (2 letter code)
+countryName_default = CA
+
+stateOrProvinceName         = State or Province Name (full name)
+stateOrProvinceName_default = Ontario
+
+localityName         = Locality Name (eg, city)
+localityName_default = Toronto
+
+organizationName            = Organization Name (eg, company)
+organizationName_default    = Blog
+
+commonName           = Common Name (e.g. FQDN or YOUR name)
+commonName_default   = nginx
+
+emailAddress         = Email Address
+emailAddress_default = test@example.com
+
+####################################################################
+[ nginx_req_extensions ]
+
+subjectKeyIdentifier = hash
+basicConstraints     = CA:FALSE
+keyUsage             = digitalSignature, keyEncipherment
+subjectAltName       = @alternate_names
+nsComment            = "OpenSSL Generated Certificate"
+
+####################################################################
+[ alternate_names ]
+
+DNS.1  = nginx.example.com

@@ -1,0 +1,137 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: VPCPeering template
+
+Parameters:
+  OnpremVpcId:
+    Type: String
+    Description: VPC that simulates on-premises environment.
+  ConsumerVpcId:
+    Type: String
+    Description: VPC for consumer of Dicoogle service.
+  ProviderVpcId:
+    Type: String
+    Description: VPC for provider of Dicoogle service.
+  OnpremCidr:
+    Type: String
+    Description: CIDR block for VPC that simulates on-premises environment.
+  OnpremRouteTable1Id:
+    Type: String
+    Description: Route table associated with public subnet1 of VPC that simulates on-premises environment.
+  OnpremRouteTable2Id:
+    Type: String
+    Description: Route table associated with public subnet2 of VPC that simulates on-premises environment.
+  ConsumerCidr:
+    Type: String
+    Description: CIDR block for VPC for consumer of Dicoogle service.
+  ConsumerRouteTable1Id:
+    Type: String
+    Description: Route table associated with private subnet1 of VPC for consumer of Dicoogle service.
+  ConsumerRouteTable2Id:
+    Type: String
+    Description: Route table associated with private subnet2 of VPC for consumer of Dicoogle service.
+  ProviderCidr:
+    Type: String
+    Description: CIDR block for VPC for provider of Dicoogle service.
+  ProviderRouteTable1Id:
+    Type: String
+    Description: Route table associated with private subnet1 of VPC for provider of Dicoogle service.
+  ProviderRouteTable2Id:
+    Type: String
+    Description: Route table associated with private subnet2 of VPC for provider of Dicoogle service.
+
+Resources:
+  PeeringConnectionOnpremConsumer:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref OnpremVpcId
+      PeerVpcId: !Ref ConsumerVpcId
+      PeerRegion: !Ref AWS::Region
+      PeerOwnerId: !Ref AWS::AccountId
+  
+  Onprem1ToConsumerRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref OnpremRouteTable1Id
+      DestinationCidrBlock: !Ref ConsumerCidr
+      VpcPeeringConnectionId: !Ref PeeringConnectionOnpremConsumer
+
+  Onprem2ToConsumerRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref OnpremRouteTable2Id
+      DestinationCidrBlock: !Ref ConsumerCidr
+      VpcPeeringConnectionId: !Ref PeeringConnectionOnpremConsumer
+
+  Consumer1ToOnpremRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ConsumerRouteTable1Id
+      DestinationCidrBlock: !Ref OnpremCidr
+      VpcPeeringConnectionId: !Ref PeeringConnectionOnpremConsumer
+
+  Consumer2ToOnpremRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ConsumerRouteTable2Id
+      DestinationCidrBlock: !Ref OnpremCidr 
+      VpcPeeringConnectionId: !Ref PeeringConnectionOnpremConsumer
+
+  PeeringConnectionOnpremProvider:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref OnpremVpcId
+      PeerVpcId: !Ref ProviderVpcId
+      PeerRegion: !Ref AWS::Region
+      PeerOwnerId: !Ref AWS::AccountId
+  
+  Onprem1ToProviderRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref OnpremRouteTable1Id
+      DestinationCidrBlock: !Ref ProviderCidr
+      VpcPeeringConnectionId: !Ref PeeringConnectionOnpremProvider
+
+  Onprem2ToProviderRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref OnpremRouteTable2Id
+      DestinationCidrBlock: !Ref ProviderCidr
+      VpcPeeringConnectionId: !Ref PeeringConnectionOnpremProvider
+
+  Provider1ToOnpremRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ProviderRouteTable1Id
+      DestinationCidrBlock: !Ref OnpremCidr
+      VpcPeeringConnectionId: !Ref PeeringConnectionOnpremProvider
+
+  Provider2ToOnpremRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ProviderRouteTable2Id
+      DestinationCidrBlock: !Ref OnpremCidr 
+      VpcPeeringConnectionId: !Ref PeeringConnectionOnpremProvider
+
+Outputs:
+  PeeringConnectionOnpremConsumer:
+    Description: ID of the Peering connection between VPC simulating on-premises and VPC for consumer of Dicoogle service.
+    Value: !Ref PeeringConnectionOnpremConsumer
+
+  PeeringConnectionOnpremProvider:
+    Description: ID of the Peering connection between VPC simulating on-premises and VPC for provider of Dicoogle service.
+    Value: !Ref PeeringConnectionOnpremProvider

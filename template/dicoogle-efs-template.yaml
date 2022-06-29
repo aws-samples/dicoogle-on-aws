@@ -1,0 +1,156 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EFS template
+
+Parameters:
+  Subnet1Id:
+    Type: String
+    Description: Provider private subnet1 where EFS mount target is placed.
+
+  Subnet2Id:
+    Type: String
+    Description: Provider private subnet1 where EFS mount target is placed.
+
+  VpcId:
+    Type: String
+    Description: Provider VPC id.
+
+  ServiceName:
+    Type: String
+    Description: Dicoogle application service name.
+    Default: dicoogle-provider
+
+  KmsKey:
+    Type: String
+    Description: KMS key used for encrypting/decrypting data in EFS.
+
+Resources:
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Join ['', [!Ref ServiceName, EFSSecurityGroup]]
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 127.0.0.1/32
+          Description: Explicit egress rule to outside of EFS is not required.
+
+  EFSFS:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Delete
+    Properties:
+      Encrypted: True
+      KmsKeyId: !Ref KmsKey
+      BackupPolicy: 
+        Status: DISABLED
+
+  MountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFS
+      SubnetId: !Ref Subnet1Id
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  MountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFS
+      SubnetId: !Ref Subnet2Id
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  APConfs:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EFSFS
+      PosixUser:
+        Uid: 1001
+        Gid: 1001
+      RootDirectory: 
+        Path: /confs
+        CreationInfo:
+          OwnerUid: 1001
+          OwnerGid: 1001
+          Permissions: 755
+
+  APImages:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EFSFS
+      PosixUser:
+        Uid: 1001
+        Gid: 1001
+      RootDirectory:
+        Path: /images
+        CreationInfo:
+          OwnerUid: 1001
+          OwnerGid: 1001
+          Permissions: 755
+
+  APImagesFromS3:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EFSFS
+      PosixUser:
+        Uid: 1001
+        Gid: 1001
+      RootDirectory:
+        Path: /images/froms3
+        CreationInfo:
+          OwnerUid: 1001
+          OwnerGid: 1001
+          Permissions: 755
+
+  APIndex:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EFSFS
+      PosixUser:
+        Uid: 1001
+        Gid: 1001
+      RootDirectory:
+        Path: /index
+        CreationInfo:
+          OwnerUid: 1001
+          OwnerGid: 1001
+          Permissions: 755
+
+Outputs:
+  EFSFS:
+    Value: !Ref EFSFS
+    Description: EFS File system.
+
+  APConfs:
+    Value: !Ref APConfs
+    Description: EFS access point for Dicoogle configuration.
+
+  APImages:
+    Value: !Ref APImages
+    Description: EFS access point for images ingested through Dicoogle application.
+
+  APImagesFromS3:
+    Value: !Ref APImagesFromS3
+    Description: EFS access point for images ingested through S3.
+
+  APIndex:
+    Value: !Ref APIndex
+    Description: EFS access point for Dicoogle indexes.
+
+  EFSSecurityGroup:
+    Value: !Ref EFSSecurityGroup
+    Description: Security group for EFS

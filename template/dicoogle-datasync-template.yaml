@@ -1,0 +1,223 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: DataSync template
+
+Parameters:
+  ImagesBucket:
+    Type: String
+    Description: The images bucket.
+  ImagesBucketArn:
+    Type: String
+    Description: The images bucket ARN.
+  EFSFS:
+    Type: String
+    Description: The EFS FileSystem id.
+  VpcId:
+    Type: String
+    Description: The VPC id that Datasync use to access EFS..
+  SubnetId:
+    Type: String
+    Description: The subnet id that Datasync use to access EFS.
+  EFSSecurityGroup:
+    Type: String
+    Description: The security group for EFS.
+  OnpremVpcId:
+    Type: String
+    Description: The VPC id to simulate on-premises environment.
+  OnpremRouteTable1Id:
+    Type: String
+    Description: Route table for public subnet1 in VPC that simulates on-premises environment.
+  OnpremRouteTable2Id:
+    Type: String
+    Description: Route table for public subnet2 in VPC that simulates on-premises environment.
+  KmsKey:
+    Type: String
+    Description: KMS key used for encrypting/decrypting data in image bucket and cloudwatch log.
+
+Resources:
+  DatasyncTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service: datasync.amazonaws.com
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: dicoogle-provider-datasync-task-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 
+                - s3:GetBucketLocation
+                - s3:ListBucket
+                - s3:ListBucketMultipartUploads
+                Resource: !Ref ImagesBucketArn
+              - Effect: Allow
+                Action: 
+                - s3:AbortMultipartUpload
+                - s3:DeleteObject
+                - s3:GetObject
+                - s3:ListMultipartUploadParts
+                - s3:PutObjectTagging
+                - s3:GetObjectTagging
+                - s3:PutObject
+                Resource: !Sub ${ImagesBucketArn}/*
+              - Effect: Allow
+                Action:
+                  - kms:GetPublicKey
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                  - kms:DescribeKey
+                Resource: !Ref KmsKey
+
+  ImagesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ImagesBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action:
+              - s3:GetObject
+              - s3:ListMultipartUploadParts
+              - s3:PutObjectTagging
+              - s3:GetObjectTagging
+              - s3:PutObject              
+            Resource: 
+              - !Ref ImagesBucketArn
+              - !Sub ${ImagesBucketArn}/*
+            Condition:
+              StringNotEqualsIfExists:
+                aws:SourceVpce: !Ref OnpremS3Endpoint
+                aws:PrincipalArn: !GetAtt DatasyncTaskRole.Arn
+
+  OnpremS3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Join [ "", [ "com.amazonaws.", { "Ref": "AWS::Region" }, ".s3" ] ]
+      VpcEndpointType: 'Gateway'
+      VpcId:
+        Ref: OnpremVpcId
+      RouteTableIds:
+        - !Ref OnpremRouteTable1Id
+        - !Ref OnpremRouteTable2Id
+
+  ImageBucketS3Location:
+    Type: AWS::DataSync::LocationS3
+    Properties:
+      S3BucketArn: !Ref ImagesBucketArn
+      S3Config:
+        BucketAccessRoleArn: !GetAtt DatasyncTaskRole.Arn
+
+  EfsLocation:
+    DependsOn:
+      - DatasyncSecurityGroup
+    Type: AWS::DataSync::LocationEFS
+    Properties:
+      EfsFilesystemArn:
+        !Sub arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${EFSFS}
+      Subdirectory: /images/froms3
+      Ec2Config:
+        SecurityGroupArns:
+          - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${DatasyncSecurityGroup}
+        SubnetArn: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${SubnetId}
+
+  DatasyncSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for datasync task
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        DestinationSecurityGroupId: !Ref EFSSecurityGroup
+        FromPort: 2049
+        ToPort: 2049
+        Description: egress rule for Datasync
+
+  EFSSecurityGroupRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EFSSecurityGroup
+      Description: ingress rule for EFS
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref DatasyncSecurityGroup
+
+  S3ToEfsTask:
+    Type: AWS::DataSync::Task
+    Properties:
+      SourceLocationArn: !Ref ImageBucketS3Location
+      DestinationLocationArn: !Ref EfsLocation
+      CloudWatchLogGroupArn: !GetAtt S3ToEfsLogGroup.Arn
+      Options:
+        VerifyMode: 'ONLY_FILES_TRANSFERRED'
+        OverwriteMode: 'ALWAYS'
+        PreserveDeletedFiles: 'PRESERVE'
+        LogLevel: 'BASIC'
+
+  S3ToEfsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      KmsKeyId: !Ref KmsKey
+      RetentionInDays: 1
+
+  CWResourcePolicy:
+    Type: AWS::Logs::ResourcePolicy
+    Properties:
+      PolicyName: "DataSyncLogsToCloudWatchLogs"
+      PolicyDocument: !Sub >-
+        {
+            "Statement": [
+                {
+                    "Sid": "DataSyncLogsToCloudWatchLogs",
+                    "Effect": "Allow",
+                    "Action": [
+                        "logs:PutLogEvents",
+                        "logs:CreateLogStream"
+                    ],
+                    "Principal": {
+                        "Service": "datasync.amazonaws.com"
+                    },
+                    "Condition": {
+                        "ArnLike": {
+                            "aws:SourceArn": [
+                                "arn:aws:datasync:${AWS::Region}:${AWS::AccountId}:task/*"
+                            ]
+                        },
+                        "StringEquals": {
+                            "aws:SourceAccount": "${AWS::AccountId}"
+                        }
+                    },
+                    "Resource": "${S3ToEfsLogGroup.Arn}"
+                }
+            ],
+            "Version": "2012-10-17"
+        }
+
+Outputs:
+  S3ToEfsTaskArn:
+    Value: !Ref S3ToEfsTask
+    Description: ARN of datasync task to copy data from S3 to EFS.

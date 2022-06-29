@@ -1,0 +1,180 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 template
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W2506
+
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+  LatestAmiId:
+    Description: The AMI id for EC2.
+    # Use the String type when passing from main template to ec2 template
+    Type: String
+    # Switch to type below when testing the ec2 template in standalone mode
+    # Type:  'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+  SubnetId:
+    Type: String
+    Description: The subnet id where EC2 instance is launched.
+  VpcId:
+    Type: String
+    Description: The VPC id where EC2 instance is launched.
+  InstanceName:
+    Type: String
+    Description: The EC2 instance name.
+  ImagesBucketArn:
+    Type: String
+    Description: The image bucket arn.
+  KmsKey:
+    Type: String
+    Description: KMS key used for encrypting/decrypting data in image bucket.
+
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref 'InstanceType'
+      KeyName: !Ref 'KeyName'
+      ImageId: !Ref 'LatestAmiId'
+      IamInstanceProfile: !Ref InstanceProfile
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref 'SubnetId'
+          GroupSet:
+            - !GetAtt InstanceSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: !Ref InstanceName
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -e
+          yum install -y telnet
+          wget http://li.nux.ro/download/nux/dextop/el7/x86_64/nux-dextop-release-0-5.el7.nux.noarch.rpm
+          amazon-linux-extras install -y epel
+          yum install -y epel-release
+          rpm -Uvh nux-dextop-release-0-5.el7.nux.noarch.rpm 
+          yum install -y git cmake gcc gcc-c++ openssl-devel
+          wget https://github.com/ghostunnel/ghostunnel/releases/download/v1.6.0/ghostunnel-v1.6.0-linux-amd64
+          chmod 755 ghostunnel-v1.6.0-linux-amd64
+          mv ghostunnel-v1.6.0-linux-amd64 /usr/local/bin/ghostunnel
+          git clone https://github.com/DCMTK/dcmtk
+          cd dcmtk; cd config; ./rootconf; cd ..; ./configure --with-openssl --ignore-deprecation
+          make all; make install
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref InstanceRole
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: onprem-ec2-access-s3-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 
+                - s3:GetBucketLocation
+                - s3:ListBucket
+                - s3:ListBucketMultipartUploads
+                Resource: !Ref ImagesBucketArn
+              - Effect: Allow
+                Action: 
+                - s3:AbortMultipartUpload
+                - s3:DeleteObject
+                - s3:GetObject
+                - s3:ListMultipartUploadParts
+                - s3:PutObjectTagging
+                - s3:GetObjectTagging
+                - s3:PutObject
+                Resource: !Sub ${ImagesBucketArn}/*
+              - Effect: Allow
+                Action:
+                  - kms:GetPublicKey
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                  - kms:DescribeKey
+                Resource: !Ref KmsKey
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W5
+            reason: "Open up egress to 0.0.0.0/0 to install yum packages and github repo"
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        FromPort: 80
+        ToPort: 80
+        Description: egress rule for 80
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        FromPort: 443
+        ToPort: 443
+        Description: egress rule for 443
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: !Ref 'SSHLocation'
+        Description: ingress rule for 22
+      VpcId: !Ref VpcId
+
+Outputs:
+  InstanceId:
+    Description: InstanceId of EC2 instance
+    Value: !Ref 'EC2Instance'
+  InstancePublicDNS:
+    Description: Public DNSName of EC2 instance
+    Value: !GetAtt EC2Instance.PublicDnsName
+  InstancePublicIP:
+    Description: Public IP address of EC2 instance
+    Value: !GetAtt EC2Instance.PublicIp
+  InstancePrivateIP:
+    Description: Private IP address of EC2 instance
+    Value: !GetAtt EC2Instance.PrivateIp
+  InstanceSecurityGroup:
+    Description: Security group of EC2 instance
+    Value: !GetAtt InstanceSecurityGroup.GroupId

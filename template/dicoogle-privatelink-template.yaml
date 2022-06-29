@@ -1,0 +1,133 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Privatelink template
+
+Parameters:
+  ConsumerVpcId:
+    Type: String
+    Description: VPC for consumer of Dicoogle service.
+  ConsumerSubnet1Id:
+    Type: String
+    Description: Private subnet1 of VPC for consumer of Dicoogle service.
+  ConsumerSubnet2Id:
+    Type: String
+    Description: Private subnet2 of VPC for consumer of Dicoogle service.
+  StorageReverseProxyPort:
+    Type: Number
+    Default: 16666
+    Description: Port for Ghostunnel reverse proxy of Dicoogle storage service.
+  QueryPort:
+    Type: Number
+    Default: 1045
+    Description: Port for Dicoogle query/retrieve service.
+  NLBArn:
+    Type: String
+    Description: NLB ARN.
+  ProviderSubnet1Cidr:
+    Type: String
+    Description: CIDR block of private subnet1 of VPC for provider of Dicoogle service.
+  ProviderSubnet2Cidr:
+    Type: String
+    Description: CIDR block of private subnet2 of VPC for provider of Dicoogle service.
+  ClientInstanceSecurityGroup:
+    Type: String  
+    Description: Security group for client EC2 instance.
+
+Resources:
+  ProviderVPCEndpointService:
+    Type: AWS::EC2::VPCEndpointService
+    Properties:
+      AcceptanceRequired: false
+      NetworkLoadBalancerArns:
+        - !Ref NLBArn
+
+  ProviderEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: false
+      SecurityGroupIds: 
+        - !Ref ProviderEndpointSecurityGroup
+      ServiceName: !Join [ "", [ "com.amazonaws.vpce.", { "Ref": "AWS::Region" }, ".", !Ref ProviderVPCEndpointService ] ]
+      SubnetIds: 
+        - !Ref ConsumerSubnet1Id
+        - !Ref ConsumerSubnet2Id
+      VpcEndpointType: 'Interface'
+      VpcId: 
+        Ref: ConsumerVpcId
+
+  ProviderEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Provider Endpoint Security Group"
+      VpcId: !Ref ConsumerVpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          CidrIp: !Ref ProviderSubnet1Cidr
+          FromPort: !Ref QueryPort
+          ToPort: !Ref QueryPort
+          Description: egress rule for query port provider subnet1
+        - IpProtocol: tcp
+          CidrIp: !Ref ProviderSubnet2Cidr
+          FromPort: !Ref QueryPort
+          ToPort: !Ref QueryPort
+          Description: egress rule for query port provider subnet2
+        - IpProtocol: tcp
+          CidrIp: !Ref ProviderSubnet1Cidr
+          FromPort: !Ref StorageReverseProxyPort
+          ToPort: !Ref StorageReverseProxyPort
+          Description: egress rule for storage port provider subnet1
+        - IpProtocol: tcp
+          CidrIp: !Ref ProviderSubnet2Cidr
+          FromPort: !Ref StorageReverseProxyPort
+          ToPort: !Ref StorageReverseProxyPort
+          Description: egress rule for storage port provider subnet2
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref QueryPort
+          ToPort: !Ref QueryPort
+          SourceSecurityGroupId: !Ref ClientInstanceSecurityGroup
+          Description: ingress rule for query port
+        - IpProtocol: tcp
+          FromPort: !Ref StorageReverseProxyPort
+          ToPort: !Ref StorageReverseProxyPort
+          SourceSecurityGroupId: !Ref ClientInstanceSecurityGroup
+          Description: ingress rule for storage port
+
+  ClientInstanceSecurityGroupRuleQuery:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ClientInstanceSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref QueryPort
+      ToPort: !Ref QueryPort
+      DestinationSecurityGroupId: !Ref ProviderEndpointSecurityGroup
+      Description: egress rule for query port
+
+  ClientInstanceSecurityGroupRuleStorage:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ClientInstanceSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref StorageReverseProxyPort
+      ToPort: !Ref StorageReverseProxyPort
+      DestinationSecurityGroupId: !Ref ProviderEndpointSecurityGroup
+      Description: egress rule for storage port
+
+Outputs:
+  ProviderEndpoint:
+    Description: Provider Endpoint DNS
+    Value: !Select [ 1, !Split [ ":", !Select [0, !GetAtt ProviderEndpoint.DnsEntries ]]]

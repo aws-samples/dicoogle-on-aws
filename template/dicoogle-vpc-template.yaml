@@ -1,0 +1,323 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: VPC template.
+
+Parameters:
+  AvailabilityZones:
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+    Description: The list of Availability Zones to use for the subnets in the VPC.
+
+  VPCName:
+    Type: String
+    Description: The name of the VPC.
+
+  VPCCidr:
+    Type: String
+    Description: The CIDR block for the VPC.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+
+  PublicSubnet1Cidr:
+    Type: String
+    Description: The CIDR block for the public subnet located in Availability Zone 1.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+
+  PublicSubnet2Cidr:
+    Type: String
+    Description: The CIDR block for the public subnet located in Availability Zone 2.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+
+  PrivateSubnet1Cidr:
+    Type: String
+    Description: The CIDR block for the private subnet located in Availability Zone 1.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+
+  PrivateSubnet2Cidr:
+    Type: String
+    Description: The CIDR block for the private subnet located in Availability Zone 2.
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+
+  CreatePrivateSubnet:
+    Type: String
+    Description: Determine if we need to create private subnet.
+    Default: Y
+
+  LogBucketArn:
+    Type: String
+    Description: Bucket Arn to store VPC flow log.
+
+  CreateVPCFlowLog:
+    Type: String
+    Description: Determine if we need to create VPC flow log.
+
+Conditions:
+  CreatePrivateSubnet: !Equals [!Ref CreatePrivateSubnet, Y]
+  CreateVPCFlowLog: !Equals [!Ref CreateVPCFlowLog, Y]
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Ref VPCName
+
+  VPCFlowLog:
+    Type: AWS::EC2::FlowLog
+    Condition: CreateVPCFlowLog
+    Properties: 
+      LogDestination: !Ref LogBucketArn
+      LogDestinationType: s3
+      ResourceId: !Ref VPC
+      ResourceType: VPC
+      TrafficType: REJECT
+
+  VPCPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref PublicSubnet1Cidr
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !Ref AvailabilityZones]
+      Tags:
+        - Key: Name
+          Value: PublicSubnet1
+
+  VPCPublicSubnet1RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PublicSubnet1
+
+  VPCPublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: VPCPublicSubnet1RouteTable
+      SubnetId:
+        Ref: VPCPublicSubnet1
+
+  VPCPublicSubnet1DefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: VPCPublicSubnet1RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: VPCIGW
+    DependsOn:
+      - VPCGW
+
+  VPCPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref PublicSubnet2Cidr
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !Ref AvailabilityZones]
+      Tags:
+        - Key: Name
+          Value: PublicSubnet2
+
+  VPCPublicSubnet2RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PublicSubnet2
+
+  VPCPublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: VPCPublicSubnet2RouteTable
+      SubnetId:
+        Ref: VPCPublicSubnet2
+
+  VPCPublicSubnet2DefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPCPublicSubnet2RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref VPCIGW
+    DependsOn:
+      - VPCGW
+
+  VPCIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: VPCIGW
+
+  VPCGW:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: VPC
+      InternetGatewayId:
+        Ref: VPCIGW
+
+  NAT1EIP:
+    DependsOn: VPCGW
+    Type: AWS::EC2::EIP
+    Condition: CreatePrivateSubnet
+    Properties:
+      Domain: vpc
+
+  NATGateway1:
+    DependsOn: VPCGW
+    Type: AWS::EC2::NatGateway
+    Condition: CreatePrivateSubnet
+    Properties:
+      AllocationId: !GetAtt 'NAT1EIP.AllocationId'
+      SubnetId: !Ref 'VPCPublicSubnet1'
+
+  NAT2EIP:
+    DependsOn: VPCGW
+    Type: AWS::EC2::EIP
+    Condition: CreatePrivateSubnet
+    Properties:
+      Domain: vpc
+
+  NATGateway2:
+    DependsOn: VPCGW
+    Type: AWS::EC2::NatGateway
+    Condition: CreatePrivateSubnet
+    Properties:
+      AllocationId: !GetAtt 'NAT2EIP.AllocationId'
+      SubnetId: !Ref 'VPCPublicSubnet2'
+
+  VPCPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePrivateSubnet
+    Properties:
+      VpcId: !Ref 'VPC'
+      CidrBlock: !Ref 'PrivateSubnet1Cidr'
+      AvailabilityZone: !Select ['0', !Ref 'AvailabilityZones']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet1
+
+  VPCPrivateSubnet1RouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: CreatePrivateSubnet
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet1
+
+  VPCPrivateSubnet1Route:
+    Type: AWS::EC2::Route
+    Condition: CreatePrivateSubnet
+    Properties:
+      RouteTableId: !Ref 'VPCPrivateSubnet1RouteTable'
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref 'NATGateway1'
+
+  VPCPrivateSubnet1ARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreatePrivateSubnet
+    Properties:
+      SubnetId: !Ref 'VPCPrivateSubnet1'
+      RouteTableId: !Ref 'VPCPrivateSubnet1RouteTable'
+
+  VPCPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePrivateSubnet
+    Properties:
+      VpcId: !Ref 'VPC'
+      CidrBlock: !Ref 'PrivateSubnet2Cidr'
+      AvailabilityZone: !Select ['1', !Ref 'AvailabilityZones']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet2
+
+  VPCPrivateSubnet2RouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: CreatePrivateSubnet
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet2
+
+  VPCPrivateSubnet2Route:
+    Type: AWS::EC2::Route
+    Condition: CreatePrivateSubnet
+    Properties:
+      RouteTableId: !Ref 'VPCPrivateSubnet2RouteTable'
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref 'NATGateway1'
+
+  VPCPrivateSubnet2ARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreatePrivateSubnet
+    Properties:
+      SubnetId: !Ref 'VPCPrivateSubnet2'
+      RouteTableId: !Ref 'VPCPrivateSubnet2RouteTable'
+
+Outputs:
+  VpcId:
+    Value: !Ref VPC
+    Description: VPC id.
+
+  PublicSubnet1:
+    Value: !Ref VPCPublicSubnet1
+    Description: Public subnet1.
+
+  PublicSubnet2:
+    Value: !Ref VPCPublicSubnet2
+    Description: Public subnet2.
+
+  PrivateSubnet1:
+    Condition: CreatePrivateSubnet
+    Value: !Ref VPCPrivateSubnet1
+    Description: Private subnet1.
+
+  PrivateSubnet2:
+    Condition: CreatePrivateSubnet
+    Value: !Ref VPCPrivateSubnet2
+    Description: Private subnet2.
+
+  PublicSubnet1RouteTable:
+    Value: !Ref VPCPublicSubnet1RouteTable
+    Description: Public subnet1 route table.
+
+  PublicSubnet2RouteTable:
+    Value: !Ref VPCPublicSubnet2RouteTable
+    Description: Public subnet2 route table.
+
+  PrivateSubnet1RouteTable:
+    Condition: CreatePrivateSubnet
+    Value: !Ref VPCPrivateSubnet1RouteTable
+    Description: Private subnet1 route table.
+
+  PrivateSubnet2RouteTable:
+    Condition: CreatePrivateSubnet
+    Value: !Ref VPCPrivateSubnet2RouteTable
+    Description: Private subnet2 route table.

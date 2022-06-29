@@ -1,0 +1,138 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: S3 template
+
+Mappings:
+# The list of regional config is based on https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-access-logs.html
+  RegionalConfigs:
+    us-east-1:
+      ELBAccountId: '127311923021'
+    us-east-2:
+      ELBAccountId: '033677994240'
+    us-west-1:
+      ELBAccountId: '027434742980'
+    us-west-2:
+      ELBAccountId: '797873946194'
+    af-south-1:
+      ELBAccountId: '098369216593'
+    ca-central-1:
+      ELBAccountId: '985666609251'
+    eu-central-1:
+      ELBAccountId: '054676820928'
+    eu-west-1:
+      ELBAccountId: '156460612806'
+    eu-west-2:
+      ELBAccountId: '652711504416'
+    eu-south-1:
+      ELBAccountId: '635631232127'
+    eu-west-3:
+      ELBAccountId: '009996457667'
+    eu-north-1:
+      ELBAccountId: '897822967062'
+    ap-east-1:
+      ELBAccountId: '754344448648'
+    ap-northeast-1:
+      ELBAccountId: '582318560864'
+    ap-northeast-2:
+      ELBAccountId: '600734575887'
+    ap-northeast-3:
+      ELBAccountId: '383597477331'
+    ap-southeast-1:
+      ELBAccountId: '114774131450'
+    ap-southeast-2:
+      ELBAccountId: '783225319266'
+    ap-southeast-3:
+      ELBAccountId: '589379963580'
+    ap-south-1:
+      ELBAccountId: '718504428378'
+    me-south-1:
+      ELBAccountId: '076674570225'
+    sa-east-1:
+      ELBAccountId: '507241528517'
+
+Resources:
+  LogBucket:
+    Type: AWS::S3::Bucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "The access log for the LogBucket is not configured."
+    Properties:
+      AccessControl: LogDeliveryWrite
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpirationRule
+            Status: Enabled
+            ExpirationInDays: 1825
+      # ObjectLockConfiguration:
+      #   ObjectLockEnabled: Enabled
+      #   Rule:
+      #     DefaultRetention:
+      #       Mode: GOVERNANCE
+      #       Years: 5
+
+  LogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Join
+                - ''
+                - - 'arn:aws:iam::'
+                  - !FindInMap
+                    - RegionalConfigs
+                    - !Ref 'AWS::Region'
+                    - ELBAccountId
+                  - ':root' 
+            Action: s3:PutObject
+            Resource: !Sub ${LogBucket.Arn}/AWSLogs/${AWS::AccountId}/*
+          - Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub ${LogBucket.Arn}/AWSLogs/${AWS::AccountId}/*
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+          - Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !Sub ${LogBucket.Arn}
+        
+Outputs:
+  LogBucket:
+    Value: !Ref LogBucket
+    Description: Log bucket
+
+  LogBucketArn:
+    Value: !GetAtt LogBucket.Arn
+    Description: Log bucket Arn
